@@ -110,17 +110,17 @@ unify bt1@(Base t1) bt2@(Base t2)
 unify (Prod t11 t12) (Prod t21 t22) = 
     do 
     subst1 <- unify t11 t21
-    subst2 <- unify t12 t22
+    subst2 <- unify (substitute subst1 t21) (substitute subst1 t22)
     return (subst1 <> subst2)
 unify (Sum t11 t12) (Sum t21 t22) = 
     do
     subst1 <- unify t11 t21
-    subst2 <- unify t12 t22
+    subst2 <- unify (substitute subst1 t21) (substitute subst1 t22)
     return (subst1 <> subst2)
 unify (Arrow t11 t12) (Arrow t21 t22) = 
     do
     subst1 <- unify t11 t21
-    subst2 <- unify t21 t22
+    subst2 <- unify (substitute subst1 t21) (substitute subst1 t22)
     return (subst1 <> subst2)
 unify (TypeVar id) t
     |id `notElem` tv t = return (id =: t)
@@ -137,7 +137,23 @@ inferProgram env bs = error "implement me! don't forget to run the result substi
                             "entire expression using allTypes from Syntax.hs"
 
 inferExp :: Gamma -> Exp -> TC (Exp, Type, Subst)
-inferExp g _ = error "Implement me!"
+inferExp gamma e@(Num _) = return (e, Base Int, emptySubst)
+inferExp gamma (If e e1 e2) = 
+    do
+    (e', tau, t) <- inferExp gamma e
+    u <- unify tau (Base Bool)
+    (e1', tau1, t1) <- inferExp (substGamma u (substGamma  t gamma)) e1
+    (e2', tau2, t2) <- inferExp (substGamma t1 (substGamma u (substGamma t gamma))) e2
+    u' <- unify (substitute t2 tau1) tau2
+    return ((If e' e1' e2'), substitute u' tau2, u' <> u <> t2 <> t1 <> t)
+inferExp gamma (App e1 e2) = 
+    do
+    (e1', tau1, t) <- inferExp gamma e1
+    (e2', tau2, t') <- inferExp (substGamma t gamma) e2
+    alpha <- fresh
+    u <- unify (substitute t' tau1) (Arrow tau2 alpha)
+    return ((App e1' e2'), substitute u alpha, u <> t' <> t)
+-- inferExp g _ = error "Implement me!"
 -- -- Note: this is the only case you need to handle for case expressions
 -- inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2])
 -- inferExp g (Case e _) = typeError MalformedAlternatives
