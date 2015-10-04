@@ -120,7 +120,7 @@ main = do
   let (dir, exe) = case v of
                      [ filename ] -> (cd </> "tests", filename)
                      [ filename, tests ] -> (tests, filename)
-                     [] -> (cd </> "tests", cd </> "dist" </> "build" </> "minhs-2" </> "minhs-2")
+                     [] -> (cd </> "tests", cd </> ".dist-buildwrapper" </> "dist" </> "build" </> "minhs-2" </> "minhs-2.exe")
   de <- doesDirectoryExist $ cd </> "tests"
   fe <- doesFileExist $ exe
   when (not fe) $ error $ "I cannot find an executable. I tried:" ++ exe

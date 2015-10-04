@@ -42,11 +42,13 @@ constType "Inr"   = Just
                   $ TypeVar "b" `Arrow` (TypeVar "a" `Sum` TypeVar "b")
 constType _       = Nothing
 
+-- augment original Env with type env?
 type Gamma = E.Env QType
 
 initialGamma :: Gamma
 initialGamma = E.empty
 
+-- type variable?
 tv :: Type -> [Id]
 tv = tv'
  where
@@ -56,10 +58,12 @@ tv = tv'
    tv' (Arrow a b) = tv a `union` tv b
    tv' (Base c   ) = []
 
+-- QType quantifier type. for all blah 
 tvQ :: QType -> [Id]
 tvQ (Forall x t) = filter (/= x) $ tvQ t
 tvQ (Ty t) = tv t
 
+-- nub is a function. Remove duplicate elements from a list
 tvGamma :: Gamma -> [Id]
 tvGamma = nub . foldMap tvQ
 
@@ -67,6 +71,7 @@ infer :: Program -> Either TypeError Program
 infer program = do (p',tau, s) <- runTC $ inferProgram initialGamma program
                    return p'
 
+-- remove for all qualifier
 unquantify :: QType -> TC Type
 {-
 Normally this implementation would be possible:
@@ -89,8 +94,40 @@ unquantify' i s (Forall x t) = do x' <- fresh
                                               ((show i =: x') <> s)
                                               (substQType (x =:TypeVar (show i)) t)
 
+{-
+unify function. Give two types and find a substitution which make them alike.
+Subst is a monoid. =: is a binary operator defined over Subst. a =:b means substitute a with b. 
+(=:) :: (Id -> Type -> Subst)
+<> is infix synonym for mappend of monoid
+-}
 unify :: Type -> Type -> TC Subst
-unify = error "implement me"
+unify t@(TypeVar t1) (TypeVar t2) 
+    | t1 == t2 = return emptySubst
+    | otherwise = return (t2 =: t)
+unify bt1@(Base t1) bt2@(Base t2)
+    | t1 == t2 = return emptySubst
+    | otherwise = typeError (TypeMismatch bt1 bt2)
+unify (Prod t11 t12) (Prod t21 t22) = 
+    do 
+    subst1 <- unify t11 t21
+    subst2 <- unify t12 t22
+    return (subst1 <> subst2)
+unify (Sum t11 t12) (Sum t21 t22) = 
+    do
+    subst1 <- unify t11 t21
+    subst2 <- unify t12 t22
+    return (subst1 <> subst2)
+unify (Arrow t11 t12) (Arrow t21 t22) = 
+    do
+    subst1 <- unify t11 t21
+    subst2 <- unify t21 t22
+    return (subst1 <> subst2)
+unify (TypeVar id) t
+    |id `notElem` tv t = return (id =: t)
+    | otherwise = typeError (OccursCheckFailed id t)
+unify t (TypeVar id)
+    |id `notElem` tv t = return (id =: t)
+    | otherwise = typeError (OccursCheckFailed id t)
 
 generalise :: Gamma -> Type -> QType
 generalise g t = error "implement me"
