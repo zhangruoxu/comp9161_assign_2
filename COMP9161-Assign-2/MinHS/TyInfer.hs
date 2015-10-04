@@ -138,6 +138,21 @@ inferProgram env bs = error "implement me! don't forget to run the result substi
 
 inferExp :: Gamma -> Exp -> TC (Exp, Type, Subst)
 inferExp gamma e@(Num _) = return (e, Base Int, emptySubst)
+inferExp gamma (Var id) 
+    | Just qt <- E.lookup gamma id = 
+        do
+        t <- unquantify qt
+        return (Var id, t, emptySubst)
+        -- | otherwise typeError
+inferExp gamma (Con c)
+    | Just qt <- constType c = 
+        do
+        t <- unquantify qt
+        return (Con c, t, emptySubst)
+inferExp gamma (Prim op) = 
+    do 
+    t <- unquantify $ primOpType op
+    return (Prim op, t, emptySubst)
 inferExp gamma (If e e1 e2) = 
     do
     (e', tau, t) <- inferExp gamma e
