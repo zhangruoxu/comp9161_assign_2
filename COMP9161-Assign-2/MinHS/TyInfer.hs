@@ -143,12 +143,13 @@ inferExp gamma (Var id)
         do
         t <- unquantify qt
         return (Var id, t, emptySubst)
-        -- | otherwise typeError
+    -- | otherwise typeError
 inferExp gamma (Con c)
     | Just qt <- constType c = 
         do
         t <- unquantify qt
         return (Con c, t, emptySubst)
+    -- | otherwise typeError
 inferExp gamma (Prim op) = 
     do 
     t <- unquantify $ primOpType op
@@ -168,6 +169,26 @@ inferExp gamma (App e1 e2) =
     alpha <- fresh
     u <- unify (substitute t' tau1) (Arrow tau2 alpha)
     return ((App e1' e2'), substitute u alpha, u <> t' <> t)
+inferExp gamma (Case e [(Alt "" [x] e1), (Alt "" [y] e2)]) = 
+    do
+    (e', tau, t) <- inferExp gamma e
+    alpha_l <- fresh
+    (e1', tau_l, t1) <- inferExp (substGamma t (E.add gamma (x, Ty alpha_l))) e1
+    alpha_r <- fresh
+    (e2', tau_r, t2) <- inferExp (substGamma t1 (substGamma t (E.add gamma (y, Ty alpha_r)))) e2
+    u <- unify (substitute t2 (substitute t1 (substitute t (Sum alpha_l alpha_r)))) (substitute t1 tau)
+    u'<- unify (substitute t2 (substitute t1 tau_l)) (substitute u tau_r)
+    return ((Case e' [(Alt "" [x] e1'), (Alt "" [y] e2')]), substitute u' (substitute u tau_r), u' <> u <> t2 <> t1 <> t)
+inferExp gamma (Letfun (Bind f _ [x] e)) = 
+    do
+    alpha1 <- fresh
+    alpha2 <- fresh
+    let gamma' = (E.add gamma (f, Ty alpha1)) in
+        do
+        (e', tau, t) <- inferExp gamma' e
+        u <- unify (substitute t alpha2) (Arrow (substitute t alpha1) tau)
+        let qt = substitute u (Arrow(substitute t alpha1) tau) in
+            return ((Letfun (Bind f (Just (Ty qt)) [x] e')), qt, u <> t)
 -- inferExp g _ = error "Implement me!"
 -- -- Note: this is the only case you need to handle for case expressions
 -- inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2])
