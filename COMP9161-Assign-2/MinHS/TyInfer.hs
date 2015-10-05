@@ -130,11 +130,21 @@ unify t (TypeVar id)
     | otherwise = typeError (OccursCheckFailed id t)
 
 generalise :: Gamma -> Type -> QType
-generalise g t = error "implement me"
+generalise g t = gen' (tv t \\ tvGamma g) t
+--generalise g t = error "implement me"
+
+gen' :: [Id] -> Type -> QType
+gen' [] t = Ty t
+gen' (id : ids) t = Forall id (gen' ids t)
 
 inferProgram :: Gamma -> Program -> TC (Program, Type, Subst)
-inferProgram env bs = error "implement me! don't forget to run the result substitution on the"
-                            "entire expression using allTypes from Syntax.hs"
+inferProgram env bs = 
+    do
+    (e', tau, t) <- inferExp env (Let bs (Var "main"))
+    let (Let bs' var) = allTypes (substQType t) e' in
+        return (bs', tau, t)
+-- inferProgram env bs = error "implement me! don't forget to run the result substitution on the"
+--                            "entire expression using allTypes from Syntax.hs"
 
 inferExp :: Gamma -> Exp -> TC (Exp, Type, Subst)
 inferExp gamma e@(Num _) = return (e, Base Int, emptySubst)
@@ -169,7 +179,7 @@ inferExp gamma (App e1 e2) =
     alpha <- fresh
     u <- unify (substitute t' tau1) (Arrow tau2 alpha)
     return ((App e1' e2'), substitute u alpha, u <> t' <> t)
-inferExp gamma (Case e [(Alt "" [x] e1), (Alt "" [y] e2)]) = 
+inferExp gamma (Case e [(Alt "Inl" [x] e1), (Alt "Inr" [y] e2)]) = 
     do
     (e', tau, t) <- inferExp gamma e
     alpha_l <- fresh
@@ -178,7 +188,8 @@ inferExp gamma (Case e [(Alt "" [x] e1), (Alt "" [y] e2)]) =
     (e2', tau_r, t2) <- inferExp (substGamma t1 (substGamma t (E.add gamma (y, Ty alpha_r)))) e2
     u <- unify (substitute t2 (substitute t1 (substitute t (Sum alpha_l alpha_r)))) (substitute t1 tau)
     u'<- unify (substitute t2 (substitute t1 tau_l)) (substitute u tau_r)
-    return ((Case e' [(Alt "" [x] e1'), (Alt "" [y] e2')]), substitute u' (substitute u tau_r), u' <> u <> t2 <> t1 <> t)
+    return ((Case e' [(Alt "Inl" [x] e1'), (Alt "Inr" [y] e2')]), substitute u' (substitute u tau_r), u' <> u <> t2 <> t1 <> t)
+inferExp g (Case e _) = typeError MalformedAlternatives
 inferExp gamma (Letfun (Bind f _ [x] e)) = 
     do
     alpha1 <- fresh
@@ -189,6 +200,11 @@ inferExp gamma (Letfun (Bind f _ [x] e)) =
         u <- unify (substitute t alpha2) (Arrow (substitute t alpha1) tau)
         let qt = substitute u (Arrow(substitute t alpha1) tau) in
             return ((Letfun (Bind f (Just (Ty qt)) [x] e')), qt, u <> t)
+inferExp gamma (Let [Bind x ty ids e1] e2) = 
+    do
+    (e1', tau, t) <- inferExp gamma e1
+    (e2', tau', t') <- inferExp (E.add (substGamma t gamma) (x, (generalise (substGamma t gamma) tau))) e2
+    return (Let [Bind x (Just (Ty tau')) ids e1'] e2, tau', t' <> t)
 -- inferExp g _ = error "Implement me!"
 -- -- Note: this is the only case you need to handle for case expressions
 -- inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2])
