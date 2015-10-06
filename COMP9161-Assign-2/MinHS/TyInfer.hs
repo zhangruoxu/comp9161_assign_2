@@ -48,7 +48,7 @@ type Gamma = E.Env QType
 initialGamma :: Gamma
 initialGamma = E.empty
 
--- type variable?
+-- get type variable from a type expression?
 tv :: Type -> [Id]
 tv = tv'
  where
@@ -58,7 +58,7 @@ tv = tv'
    tv' (Arrow a b) = tv a `union` tv b
    tv' (Base c   ) = []
 
--- QType quantifier type. for all blah 
+-- QType type with quantifier
 tvQ :: QType -> [Id]
 tvQ (Forall x t) = filter (/= x) $ tvQ t
 tvQ (Ty t) = tv t
@@ -110,17 +110,17 @@ unify bt1@(Base t1) bt2@(Base t2)
 unify (Prod t11 t12) (Prod t21 t22) = 
     do 
     subst1 <- unify t11 t21
-    subst2 <- unify (substitute subst1 t21) (substitute subst1 t22)
+    subst2 <- unify (substitute subst1 t12) (substitute subst1 t22)
     return (subst1 <> subst2)
 unify (Sum t11 t12) (Sum t21 t22) = 
     do
     subst1 <- unify t11 t21
-    subst2 <- unify (substitute subst1 t21) (substitute subst1 t22)
+    subst2 <- unify (substitute subst1 t12) (substitute subst1 t22)
     return (subst1 <> subst2)
 unify (Arrow t11 t12) (Arrow t21 t22) = 
     do
     subst1 <- unify t11 t21
-    subst2 <- unify (substitute subst1 t21) (substitute subst1 t22)
+    subst2 <- unify (substitute subst1 t12) (substitute subst1 t22)
     return (subst1 <> subst2)
 unify (TypeVar id) t
     |id `notElem` tv t = return (id =: t)
@@ -128,6 +128,7 @@ unify (TypeVar id) t
 unify t (TypeVar id)
     |id `notElem` tv t = return (id =: t)
     | otherwise = typeError (OccursCheckFailed id t)
+unify t1 t2 = typeError (TypeMismatch t1 t2)
 
 generalise :: Gamma -> Type -> QType
 generalise g t = gen' (tv t \\ tvGamma g) t
@@ -148,37 +149,43 @@ inferProgram env bs =
 
 inferExp :: Gamma -> Exp -> TC (Exp, Type, Subst)
 inferExp gamma e@(Num _) = return (e, Base Int, emptySubst)
-inferExp gamma (Var id) 
-    | Just qt <- E.lookup gamma id = 
+
+inferExp gamma v@(Var id)
+    | Just qt <- E.lookup gamma id = -- find id type from environment. And use fresh variable to unquantify the type
         do
         t <- unquantify qt
         return (Var id, t, emptySubst)
-    -- | otherwise typeError
-inferExp gamma (Con c)
-    | Just qt <- constType c = 
+    | otherwise = error $ "error in Var " ++ show v
+    
+inferExp gamma v@(Con c)
+    | Just qt <- constType c = -- Type for type constructor. Use fresh variable to unquantify them.
         do
         t <- unquantify qt
-        return (Con c, t, emptySubst)
-    -- | otherwise typeError
+        return (Con c , t, emptySubst)
+    | otherwise = error $ "error in Con " ++ show v
+    
 inferExp gamma (Prim op) = 
     do 
-    t <- unquantify $ primOpType op
+    t <- unquantify $ primOpType op -- Type for primitive operator. Use fresh variable to unquantify them.
     return (Prim op, t, emptySubst)
+    
 inferExp gamma (If e e1 e2) = 
     do
-    (e', tau, t) <- inferExp gamma e
-    u <- unify tau (Base Bool)
+    (e', tau, t) <- inferExp gamma e -- Type of this expression must be boolean
+    u <- unify tau (Base Bool) -- If unification cannot be found, e is not a boolean expression
     (e1', tau1, t1) <- inferExp (substGamma u (substGamma  t gamma)) e1
     (e2', tau2, t2) <- inferExp (substGamma t1 (substGamma u (substGamma t gamma))) e2
     u' <- unify (substitute t2 tau1) tau2
-    return ((If e' e1' e2'), substitute u' tau2, u' <> u <> t2 <> t1 <> t)
+    return ((If e' e1' e2'), substitute u' tau2, u' <> t2 <> t1 <> u <> t)
+    
 inferExp gamma (App e1 e2) = 
     do
-    (e1', tau1, t) <- inferExp gamma e1
-    (e2', tau2, t') <- inferExp (substGamma t gamma) e2
+    (e1', tau1, t) <- inferExp gamma e1 -- e1 is a function, maybe a polymorphic function, which means its type contains type variables.
+    (e2', tau2, t') <- inferExp (substGamma t gamma) e2 --e2 is parameter. If e1 is a polymorphic function, because of the type of e2, now it is not polymorphic
     alpha <- fresh
-    u <- unify (substitute t' tau1) (Arrow tau2 alpha)
+    u <- unify (substitute t' tau1) (Arrow tau2 alpha) -- t' contains de-polymorphism information. alpha represents return type
     return ((App e1' e2'), substitute u alpha, u <> t' <> t)
+    
 inferExp gamma (Case e [(Alt "Inl" [x] e1), (Alt "Inr" [y] e2)]) = 
     do
     (e', tau, t) <- inferExp gamma e
@@ -190,22 +197,23 @@ inferExp gamma (Case e [(Alt "Inl" [x] e1), (Alt "Inr" [y] e2)]) =
     u'<- unify (substitute t2 (substitute t1 tau_l)) (substitute u tau_r)
     return ((Case e' [(Alt "Inl" [x] e1'), (Alt "Inr" [y] e2')]), substitute u' (substitute u tau_r), u' <> u <> t2 <> t1 <> t)
 inferExp g (Case e _) = typeError MalformedAlternatives
+
 inferExp gamma (Letfun (Bind f _ [x] e)) = 
     do
     alpha1 <- fresh
     alpha2 <- fresh
-    let gamma' = (E.add gamma (f, Ty alpha1)) in
-        do
-        (e', tau, t) <- inferExp gamma' e
-        u <- unify (substitute t alpha2) (Arrow (substitute t alpha1) tau)
-        let qt = substitute u (Arrow(substitute t alpha1) tau) in
-            return ((Letfun (Bind f (Just (Ty qt)) [x] e')), qt, u <> t)
+    (e', tau, t) <- inferExp (E.add (E.add gamma (x, Ty alpha1)) (f, Ty alpha2)) e-- introduce fresh variables to represent argument type and function type
+    u <- unify (substitute t alpha2) (Arrow (substitute t alpha1) tau)
+    let qt = substitute u (Arrow(substitute t alpha1) tau) in
+        return ((Letfun (Bind f (Just (Ty qt)) [x] e')), qt, u <> t) -- add function type
+            
 inferExp gamma (Let [Bind x ty ids e1] e2) = 
     do
     (e1', tau, t) <- inferExp gamma e1
-    (e2', tau', t') <- inferExp (E.add (substGamma t gamma) (x, (generalise (substGamma t gamma) tau))) e2
-    return (Let [Bind x (Just (Ty tau')) ids e1'] e2, tau', t' <> t)
--- inferExp g _ = error "Implement me!"
+    let qt = (generalise (substGamma t gamma) tau)
+    (e2', tau', t') <- inferExp (E.add (substGamma t gamma) (x, qt)) e2
+    return (Let [Bind x (Just qt) ids e1'] e2', tau', t' <> t)
+inferExp g p = error $ show "non-exhaustive pattern in inferExp"
 -- -- Note: this is the only case you need to handle for case expressions
 -- inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2])
 -- inferExp g (Case e _) = typeError MalformedAlternatives
