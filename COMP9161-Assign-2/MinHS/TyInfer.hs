@@ -131,12 +131,12 @@ unify t (TypeVar id)
 unify t1 t2 = typeError (TypeMismatch t1 t2)
 
 generalise :: Gamma -> Type -> QType
-generalise g t = gen' (tv t \\ tvGamma g) t
+generalise gamma tau = gen (tv tau \\ tvGamma gamma) tau
 --generalise g t = error "implement me"
 
-gen' :: [Id] -> Type -> QType
-gen' [] t = Ty t
-gen' (id : ids) t = Forall id (gen' ids t)
+gen :: [Id] -> Type -> QType
+gen [] tau = Ty tau
+gen (id : ids) tau = Forall id (gen ids tau)
 
 inferProgram :: Gamma -> Program -> TC (Program, Type, Subst)
 inferProgram env bs = 
